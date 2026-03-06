@@ -68,11 +68,10 @@ with tabs[1]:
     st.info("After scraping jobs, companies with location data will be shown on the map below.")
     df = st.session_state.get('df', pd.DataFrame())
     if not df.empty and 'location' in df.columns:
-        import pydeck as pdk
-        import geopy
+        import folium
+        from streamlit_folium import st_folium
         from geopy.geocoders import Nominatim
         import time
-        from collections import defaultdict
 
         geolocator = Nominatim(user_agent="jobspy_map")
 
@@ -121,40 +120,60 @@ with tabs[1]:
         map_df['lon'] = map_df['lon'].astype(float)
         st.write(f"Locations with coordinates: {len(map_df)}")
         if not map_df.empty:
-            # Use IconLayer for pins with tooltips
-            icon_data = {
-                "url": "https://cdn-icons-png.flaticon.com/512/684/684908.png",  # Pin icon
-                "width": 128,
-                "height": 128,
-                "anchorY": 128
-            }
-            map_df["icon_data"] = [icon_data] * len(map_df)
-            # Set initial focus to the Netherlands
+            # Count vacancies per company
+            company_vacancy_count = map_df.groupby('company').size().to_dict()
+
+            # Aggregate data by company and location (take first location per company)
+            company_data = map_df.groupby('company').agg({
+                'lat': 'first',
+                'lon': 'first',
+                'location': 'first'
+            }).reset_index()
+            company_data['vacancy_count'] = company_data['company'].map(company_vacancy_count)
+
+            # Create Folium map centered on Netherlands
             netherlands_lat, netherlands_lon = 52.1326, 5.2913
-            st.pydeck_chart(pdk.Deck(
-                map_style='mapbox://styles/mapbox/streets-v11',
-                initial_view_state=pdk.ViewState(
-                    latitude=netherlands_lat,
-                    longitude=netherlands_lon,
-                    zoom=7,
-                    pitch=0,
-                ),
-                layers=[
-                    pdk.Layer(
-                        "IconLayer",
-                        data=map_df,
-                        get_icon="icon_data",
-                        get_position='[lon, lat]',
-                        size_scale=20,  # Larger pins
-                        pickable=True,
-                    ),
-                ],
-                tooltip={
-                    "html": "<b>Company:</b> {company}<br/><b>Location:</b> {location}",
-                    "style": {"color": "white"}
-                }
-            ))
-            st.write("Companies mapped:", map_df[['company', 'location', 'lat', 'lon']])
+            m = folium.Map(location=[netherlands_lat, netherlands_lon], zoom_start=7)
+
+            # Normalize radius for circle markers (scale by vacancy count)
+            max_vacancies = company_data['vacancy_count'].max()
+            min_vacancies = company_data['vacancy_count'].min()
+
+            # Add circle markers for each company with vacancy counts
+            for _, row in company_data.iterrows():
+                vacancy_count = row['vacancy_count']
+                # Scale radius from 10 to 40 based on vacancy count
+                radius = 10 + (vacancy_count - min_vacancies) / max(max_vacancies - min_vacancies, 1) * 30
+
+                # Create popup with company and vacancy information
+                popup_text = f"""
+                <div style="font-family: Arial; width: 250px;">
+                    <b style="font-size: 16px; color: #FF6B6B;">🏢 {row['company']}</b><br>
+                    <hr style="margin: 5px 0;">
+                    <b>Openstaande Vacatures:</b> {vacancy_count}<br>
+                    <b>Locatie:</b> {row['location']}
+                </div>
+                """
+
+                folium.CircleMarker(
+                    location=[row['lat'], row['lon']],
+                    radius=radius,
+                    popup=folium.Popup(popup_text, max_width=300),
+                    tooltip=f"{row['company']} - {vacancy_count} vacatures",
+                    color='#FF6B6B',
+                    fill=True,
+                    fillColor='#FF6B6B',
+                    fillOpacity=0.7,
+                    weight=2
+                ).add_to(m)
+
+            st_folium(m, width=1000, height=600)
+
+            # Show summary table with companies and vacancy counts
+            st.subheader("📊 Vacatures per Bedrijf")
+            summary_df = company_data[['company', 'vacancy_count', 'location']].sort_values('vacancy_count', ascending=False)
+            summary_df.columns = ['Bedrijf', 'Aantal Vacatures', 'Locatie']
+            st.dataframe(summary_df, use_container_width=True)
         else:
             st.warning("No mappable company locations found. Try scraping jobs with valid, specific location data (e.g., city names).")
     else:
