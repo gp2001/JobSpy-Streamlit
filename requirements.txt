@@ -5,5 +5,5 @@ requests>=2.31.0
 selenium>=4.11.0
 pydeck>=0.8.0
 geopy>=2.3.0
-jobspy>=0.2.3
+python-jobspy>=1.0.0
 
