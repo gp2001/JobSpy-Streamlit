@@ -18,7 +18,7 @@ st.sidebar.markdown("""
 | Site | Status |
 |---|---|
 | Indeed | ✅ Working |
-| LinkedIn | ✅ Working |
+| LinkedIn | ⚠️ Intermittent (rate-limited) |
 | ZipRecruiter | ❌ 403 (EU GDPR) |
 | Glassdoor | ❌ 400 (location parse) |
 | Google | ❌ RetryError (rate-limit) |
@@ -45,7 +45,7 @@ with tabs[0]:
             default=["indeed", "linkedin"],
             help=(
                 "✅ indeed — reliable on cloud\n"
-                "✅ linkedin — reliable on cloud\n"
+                "⚠️ linkedin — intermittent (rate-limited on cloud IPs)\n"
                 "❌ zip_recruiter — 403 GDPR geo-block (EU)\n"
                 "❌ glassdoor — 400 / location not parsed on cloud IPs\n"
                 "❌ google — RetryError (rate-limited on cloud IPs)\n"
@@ -57,20 +57,47 @@ with tabs[0]:
         submitted = st.form_submit_button("Scrape Jobs 🚀")
 
     if submitted:
-        with st.spinner("Scraping jobs, please wait... ⏳"):
-            jobs = scrape_jobs(
-                site_name=site_name,
-                search_term=search_term,
-                google_search_term=google_search_term,
-                location=location,
-                results_wanted=results_wanted,
-                hours_old=hours_old,
-                country_indeed=country_indeed,
-            )
-        st.success(f"🎉 Found {len(jobs)} jobs!")
-        jobs.to_csv("jobs.csv", quoting=csv.QUOTE_NONNUMERIC, escapechar="\\", index=False)
-        st.session_state['df'] = pd.DataFrame(jobs)
-        st.session_state['blocklist'] = blocklist
+        if not site_name:
+            st.warning("Please select at least one site to scrape.")
+        else:
+            all_jobs = []
+            failed_sites = []
+
+            progress_bar = st.progress(0, text="Starting scrape...")
+            for i, site in enumerate(site_name):
+                progress_bar.progress((i) / len(site_name), text=f"Scraping {site}...")
+                try:
+                    result = scrape_jobs(
+                        site_name=[site],
+                        search_term=search_term,
+                        google_search_term=google_search_term,
+                        location=location,
+                        results_wanted=results_wanted,
+                        hours_old=hours_old,
+                        country_indeed=country_indeed,
+                    )
+                    if result is not None and not result.empty:
+                        all_jobs.append(result)
+                        st.toast(f"✅ {site}: {len(result)} jobs", icon="✅")
+                except Exception as e:
+                    failed_sites.append((site, str(e).splitlines()[0]))
+                    st.toast(f"❌ {site} failed", icon="❌")
+
+            progress_bar.progress(1.0, text="Done!")
+
+            if failed_sites:
+                with st.expander(f"⚠️ {len(failed_sites)} site(s) failed — click to see details"):
+                    for site, err in failed_sites:
+                        st.error(f"**{site}**: {err}")
+
+            if all_jobs:
+                jobs = pd.concat(all_jobs, ignore_index=True)
+                st.success(f"🎉 Found {len(jobs)} jobs across {len(all_jobs)} site(s)!")
+                jobs.to_csv("jobs.csv", quoting=csv.QUOTE_NONNUMERIC, escapechar="\\", index=False)
+                st.session_state['df'] = jobs
+                st.session_state['blocklist'] = blocklist
+            else:
+                st.error("No jobs found — all selected sites failed. Check the expander above for details.")
 
     # --- Results (persists across tab switches via session_state) ---
     df = st.session_state.get('df', pd.DataFrame())
