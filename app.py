@@ -9,9 +9,21 @@ st.sidebar.title("ICT Group JobSpy 🚀")
 st.sidebar.markdown("""
 **Welcome to ICT Group Job Scraper! 👋**
 
-- 🌍 Scrape jobs from top platforms: Indeed, LinkedIn, ZipRecruiter, Glassdoor, Google, Bayt, Naukri
+- 🌍 Scrape jobs from top platforms
 - 🏢 Blocklist companies you don't want to see
 - 🕵️‍♂️ Filter by company, download results, and more!
+
+**Site status on Streamlit Cloud:**
+
+| Site | Status |
+|---|---|
+| Indeed | ✅ Working |
+| LinkedIn | ✅ Working |
+| ZipRecruiter | ❌ 403 (EU GDPR) |
+| Glassdoor | ❌ 400 (location parse) |
+| Google | ❌ RetryError (rate-limit) |
+| Bayt | ❌ 403 Forbidden |
+| Naukri | ❌ 406 reCAPTCHA |
 """)
 
 # --- Main Tabs ---
@@ -30,7 +42,16 @@ with tabs[0]:
         site_name = st.multiselect(
             "Sites to Scrape",
             ["indeed", "linkedin", "zip_recruiter", "glassdoor", "google", "bayt", "naukri"],
-            default=["indeed", "linkedin", "zip_recruiter", "glassdoor", "google", "bayt", "naukri"]
+            default=["indeed", "linkedin"],
+            help=(
+                "✅ indeed — reliable on cloud\n"
+                "✅ linkedin — reliable on cloud\n"
+                "❌ zip_recruiter — 403 GDPR geo-block (EU)\n"
+                "❌ glassdoor — 400 / location not parsed on cloud IPs\n"
+                "❌ google — RetryError (rate-limited on cloud IPs)\n"
+                "❌ bayt — 403 Forbidden on cloud IPs\n"
+                "❌ naukri — 406 reCAPTCHA required on cloud IPs"
+            )
         )
         blocklist = st.text_area("Blocklist Companies (comma separated)", value="")
         submitted = st.form_submit_button("Scrape Jobs 🚀")
