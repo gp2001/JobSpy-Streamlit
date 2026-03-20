@@ -67,22 +67,28 @@ with tabs[0]:
                 hours_old=hours_old,
                 country_indeed=country_indeed,
             )
-            st.success(f"🎉 Found {len(jobs)} jobs!")
-            jobs.to_csv("jobs.csv", quoting=csv.QUOTE_NONNUMERIC, escapechar="\\", index=False)
-            df = pd.DataFrame(jobs)
-            st.session_state['df'] = df  # Store df in session_state for use in other tabs
-            if not df.empty:
-                blocklist_companies = [c.strip().lower() for c in blocklist.split(",") if c.strip()]
-                if blocklist_companies:
-                    df = df[~df['company'].str.lower().isin(blocklist_companies)]
-                st.write(f"Showing {len(df)} jobs after blocklist filter.")
-                companies = df['company'].unique()
-                selected_companies = st.multiselect("Filter by Company 🏢", companies, default=list(companies))
-                filtered_df = df[df['company'].isin(selected_companies)]
-                st.dataframe(filtered_df)
-                st.download_button("⬇️ Download CSV", filtered_df.to_csv(index=False), file_name="filtered_jobs.csv", mime="text/csv")
-            else:
-                st.warning("No jobs found. Try different search terms or locations! 😕")
+        st.success(f"🎉 Found {len(jobs)} jobs!")
+        jobs.to_csv("jobs.csv", quoting=csv.QUOTE_NONNUMERIC, escapechar="\\", index=False)
+        st.session_state['df'] = pd.DataFrame(jobs)
+        st.session_state['blocklist'] = blocklist
+
+    # --- Results (persists across tab switches via session_state) ---
+    df = st.session_state.get('df', pd.DataFrame())
+    saved_blocklist = st.session_state.get('blocklist', '')
+
+    if not df.empty:
+        blocklist_companies = [c.strip().lower() for c in saved_blocklist.split(",") if c.strip()]
+        display_df = df.copy()
+        if blocklist_companies:
+            display_df = display_df[~display_df['company'].str.lower().isin(blocklist_companies)]
+        st.write(f"Showing {len(display_df)} jobs after blocklist filter.")
+        companies = display_df['company'].unique()
+        selected_companies = st.multiselect("Filter by Company 🏢", companies, default=list(companies))
+        filtered_df = display_df[display_df['company'].isin(selected_companies)]
+        st.dataframe(filtered_df)
+        st.download_button("⬇️ Download CSV", filtered_df.to_csv(index=False), file_name="filtered_jobs.csv", mime="text/csv")
+    elif submitted:
+        st.warning("No jobs found. Try different search terms or locations! 😕")
 
 with tabs[1]:
     st.title("Company Map 🗺️")
