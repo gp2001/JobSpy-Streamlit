@@ -283,7 +283,10 @@ with tabs[3]:
             pwd = st.text_input("Password", type="password")
             login_btn = st.form_submit_button("Login")
         if login_btn:
-            admin_pass = st.secrets.get("ADMIN_PASSWORD", "admin123")
+            try:
+                admin_pass = st.secrets["ADMIN_PASSWORD"]
+            except (KeyError, FileNotFoundError):
+                admin_pass = "admin123"
             if pwd == admin_pass:
                 st.session_state["admin_authenticated"] = True
                 st.rerun()
