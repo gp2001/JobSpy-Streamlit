@@ -1,9 +1,20 @@
 import streamlit as st
 import pandas as pd
 import csv
+import uuid
 from jobspy import scrape_jobs
+from analytics import log_event, get_events_df, get_summary_stats
 
 st.set_page_config(page_title="ICT Job Scraper 🚀", page_icon="🔎", layout="wide")
+
+# ── Session identity & page-view tracking ─────────────────────────────────────
+if "session_id" not in st.session_state:
+    st.session_state["session_id"] = str(uuid.uuid4())
+if "session_logged" not in st.session_state:
+    st.session_state["session_logged"] = True
+    log_event(st.session_state["session_id"], "page_view")
+
+_SID = st.session_state["session_id"]
 
 st.sidebar.title("ICT Group JobSpy 🚀")
 st.sidebar.markdown("""
@@ -27,7 +38,7 @@ st.sidebar.markdown("""
 """)
 
 # --- Main Tabs ---
-tabs = st.tabs(["Company Info 📊", "Company Map 🗺️", "LinkedIn Profile Search 🕵️‍♂️"])
+tabs = st.tabs(["Company Info 📊", "Company Map 🗺️", "LinkedIn Profile Search 🕵️‍♂️", "Admin 🔐"])
 
 with tabs[0]:
     st.title("Company Information 📊")
@@ -96,6 +107,14 @@ with tabs[0]:
                 jobs.to_csv("jobs.csv", quoting=csv.QUOTE_NONNUMERIC, escapechar="\\", index=False)
                 st.session_state['df'] = jobs
                 st.session_state['blocklist'] = blocklist
+                log_event(
+                    _SID,
+                    "job_search",
+                    search_term=search_term,
+                    location=location,
+                    sites=", ".join(site_name),
+                    results_count=len(jobs),
+                )
             else:
                 st.error("No jobs found — all selected sites failed. Check the expander above for details.")
 
@@ -247,5 +266,136 @@ with tabs[2]:
             df = selenium_bing_linkedin_search(query, max_results=int(max_results))
         st.success(f"Found {len(df)} LinkedIn profiles.")
         st.dataframe(df)
+        log_event(_SID, "profile_search", search_term=query, results_count=len(df))
     else:
         st.info("Enter role, company, and click Search to find LinkedIn profiles.")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tab 4 – Admin Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+with tabs[3]:
+    st.title("Admin Dashboard 🔐")
+
+    # ── Login ────────────────────────────────────────────────────────────────
+    if not st.session_state.get("admin_authenticated", False):
+        st.markdown("This area is restricted to administrators.")
+        with st.form("admin_login"):
+            pwd = st.text_input("Password", type="password")
+            login_btn = st.form_submit_button("Login")
+        if login_btn:
+            admin_pass = st.secrets.get("ADMIN_PASSWORD", "admin123")
+            if pwd == admin_pass:
+                st.session_state["admin_authenticated"] = True
+                st.rerun()
+            else:
+                st.error("❌ Incorrect password. Please try again.")
+    else:
+        # ── Logout ───────────────────────────────────────────────────────────
+        if st.button("Logout 🚪"):
+            st.session_state["admin_authenticated"] = False
+            st.rerun()
+
+        st.success("✅ Logged in as Admin")
+
+        # ── KPI Metrics ──────────────────────────────────────────────────────
+        stats = get_summary_stats()
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("👁️ Page Views",       stats["page_views"])
+        c2.metric("👤 Unique Sessions",   stats["unique_sessions"])
+        c3.metric("📋 Total Events",      stats["total_events"])
+        c4.metric("🔍 Job Searches",      stats["job_searches"])
+        c5.metric("🕵️ Profile Searches",  stats["profile_searches"])
+
+        events_df = get_events_df()
+
+        if events_df.empty:
+            st.info("No usage data recorded yet. Data appears here as users interact with the app.")
+        else:
+            events_df["timestamp"] = pd.to_datetime(events_df["timestamp"])
+            events_df["date"] = events_df["timestamp"].dt.date
+
+            # ── Activity over time ────────────────────────────────────────────
+            st.subheader("📈 Activity Over Time")
+            daily = (
+                events_df.groupby(["date", "action"])
+                .size()
+                .reset_index(name="count")
+                .pivot(index="date", columns="action", values="count")
+                .fillna(0)
+            )
+            st.line_chart(daily)
+
+            # ── Unique sessions per day ───────────────────────────────────────
+            st.subheader("👥 Unique Users (Sessions) Per Day")
+            daily_users = (
+                events_df.groupby("date")["session_id"]
+                .nunique()
+                .reset_index(name="unique_sessions")
+                .set_index("date")
+            )
+            st.bar_chart(daily_users)
+
+            # ── Top search terms ──────────────────────────────────────────────
+            search_events = events_df[
+                (events_df["action"] == "job_search") & (events_df["search_term"] != "")
+            ]
+            if not search_events.empty:
+                st.subheader("🔍 Top Job Search Terms")
+                top_terms = (
+                    search_events["search_term"]
+                    .value_counts()
+                    .head(10)
+                    .rename_axis("search_term")
+                    .reset_index(name="count")
+                    .set_index("search_term")
+                )
+                st.bar_chart(top_terms)
+
+            # ── Sites used ───────────────────────────────────────────────────
+            if not search_events.empty and "sites" in search_events.columns:
+                st.subheader("🌐 Sites Scraped (all-time)")
+                sites_series = (
+                    search_events["sites"]
+                    .dropna()
+                    .str.split(",")
+                    .explode()
+                    .str.strip()
+                )
+                sites_series = sites_series[sites_series != ""]
+                if not sites_series.empty:
+                    st.bar_chart(
+                        sites_series.value_counts()
+                        .rename_axis("site")
+                        .reset_index(name="count")
+                        .set_index("site")
+                    )
+
+            # ── Session table ────────────────────────────────────────────────
+            st.subheader("🗒️ Sessions Summary")
+            session_summary = (
+                events_df.groupby("session_id")
+                .agg(
+                    first_seen=("timestamp", "min"),
+                    last_seen=("timestamp", "max"),
+                    total_events=("id", "count"),
+                    job_searches=("action", lambda x: (x == "job_search").sum()),
+                    profile_searches=("action", lambda x: (x == "profile_search").sum()),
+                )
+                .sort_values("last_seen", ascending=False)
+                .reset_index()
+            )
+            st.dataframe(session_summary, use_container_width=True)
+
+            # ── Raw event log ────────────────────────────────────────────────
+            with st.expander("📋 Raw Event Log"):
+                st.dataframe(
+                    events_df.drop(columns=["id"]).reset_index(drop=True),
+                    use_container_width=True,
+                )
+                st.download_button(
+                    "⬇️ Download Event Log (CSV)",
+                    events_df.to_csv(index=False),
+                    file_name="analytics_events.csv",
+                    mime="text/csv",
+                )
+
