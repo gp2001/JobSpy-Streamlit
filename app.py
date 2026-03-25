@@ -286,7 +286,12 @@ with tabs[3]:
             try:
                 admin_pass = st.secrets["ADMIN_PASSWORD"]
             except (KeyError, FileNotFoundError):
-                admin_pass = "admin123"
+                st.error(
+                    "⚙️ **ADMIN_PASSWORD is not configured.** "
+                    "Go to your Streamlit Cloud app → Settings → Secrets and add: "
+                    "`ADMIN_PASSWORD = \"your-password\"`"
+                )
+                st.stop()
             if pwd == admin_pass:
                 st.session_state["admin_authenticated"] = True
                 st.rerun()
