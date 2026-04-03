@@ -2,38 +2,69 @@
 resume_matcher.py
 -----------------
 Helpers for:
-  - Extracting plain text from an uploaded resume (PDF / DOCX)
-  - Analysing the resume with LM Studio to derive job-search terms
+  - Extracting plain text from an uploaded resume (PDF / DOCX / TXT)
+  - Analysing the resume with Azure OpenAI (gpt-4.1)
   - Scoring individual job vacancies against the resume
 
-LM Studio exposes an OpenAI-compatible REST API, so we use the `openai`
-library directly instead of the `lmstudio` SDK (which has an anyio 4.x
-incompatibility).
+Authentication: API key (read from AZURE_OPENAI_API_KEY env var / Streamlit secret).
 """
 
 import io
 import json
+import os
 import re
 
-from openai import OpenAI
+# ── Config (env vars / Streamlit secrets) ─────────────────────────────────────
+endpoint         = os.getenv("ENDPOINT_URL",         "https://centerofexcellence.openai.azure.com/")
+deployment       = os.getenv("DEPLOYMENT_NAME",       "gpt-4.1")
+subscription_key = os.getenv("AZURE_OPENAI_API_KEY",  "REPLACE_WITH_YOUR_KEY_VALUE_HERE")
 
-# ── LM Studio connection ───────────────────────────────────────────────────────
-LMS_BASE_URL = "http://spark-ehv.ehv.ict.nl:1234/v1"
-MODEL_ID     = "openai/gpt-oss-120b"
 
-def _get_client() -> OpenAI:
-    return OpenAI(base_url=LMS_BASE_URL, api_key="lm-studio")
+def _get_client():
+    """Build the AzureOpenAI client with key-based authentication (lazy import)."""
+    from openai import AzureOpenAI
+    return AzureOpenAI(
+        azure_endpoint=endpoint,
+        api_key=subscription_key,
+        api_version="2025-01-01-preview",
+    )
 
+
+# ── LLM helper ─────────────────────────────────────────────────────────────────
 
 def _chat(prompt: str) -> str:
     """Send a single-turn chat request and return the response text."""
     client = _get_client()
-    response = client.chat.completions.create(
-        model=MODEL_ID,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
+
+    chat_prompt = [
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "You are an AI assistant that helps people find information.",
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": prompt,
+        },
+    ]
+
+    completion = client.chat.completions.create(
+        model=deployment,
+        messages=chat_prompt,
+        max_tokens=32768,
+        temperature=0.7,
+        top_p=0.95,
+        frequency_penalty=0,
+        presence_penalty=0,
+        stop=None,
+        stream=False,
     )
-    return response.choices[0].message.content or ""
+    return completion.choices[0].message.content or ""
+
 
 
 # ── Text extraction ────────────────────────────────────────────────────────────

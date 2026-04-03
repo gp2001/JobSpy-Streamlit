@@ -7,6 +7,26 @@ from analytics import log_event, get_events_df, get_summary_stats
 
 st.set_page_config(page_title="ICT Job Scraper 🚀", page_icon="🔎", layout="wide")
 
+# ── App-level password gate ────────────────────────────────────────────────────
+if not st.session_state.get("app_authenticated", False):
+    st.title("🔐 ICT Group JobSpy")
+    st.markdown("Please enter the access password to continue.")
+    with st.form("app_login_form"):
+        app_pwd = st.text_input("Password", type="password")
+        login_submit = st.form_submit_button("Enter")
+    if login_submit:
+        try:
+            correct = st.secrets["APP_PASSWORD"]
+        except (KeyError, FileNotFoundError):
+            correct = "ictgroupm&s"   # fallback when secrets.toml is absent
+        if app_pwd == correct:
+            st.session_state["app_authenticated"] = True
+            st.rerun()
+        else:
+            st.error("❌ Incorrect password. Please try again.")
+    st.stop()
+# ── End password gate ──────────────────────────────────────────────────────────
+
 # ── Session identity & page-view tracking ─────────────────────────────────────
 if "session_id" not in st.session_state:
     st.session_state["session_id"] = str(uuid.uuid4())
