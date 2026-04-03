@@ -38,7 +38,7 @@ st.sidebar.markdown("""
 """)
 
 # --- Main Tabs ---
-tabs = st.tabs(["Company Info 📊", "Company Map 🗺️", "LinkedIn Profile Search 🕵️‍♂️", "Admin 🔐"])
+tabs = st.tabs(["Company Info 📊", "Company Map 🗺️", "LinkedIn Profile Search 🕵️‍♂️", "Resume Matcher 🤖", "Admin 🔐"])
 
 with tabs[0]:
     st.title("Company Information 📊")
@@ -271,9 +271,232 @@ with tabs[2]:
         st.info("Enter role, company, and click Search to find LinkedIn profiles.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Tab 4 – Admin Dashboard
+# Tab 4 – Resume Matcher
 # ─────────────────────────────────────────────────────────────────────────────
 with tabs[3]:
+    st.title("Resume Matcher 🤖")
+    st.markdown(
+        "Upload your resume and let the AI find the best matching vacancies, "
+        "then score and explain each match."
+    )
+
+    # ── Step 1: Upload ────────────────────────────────────────────────────────
+    uploaded_resume = st.file_uploader(
+        "📄 Upload your resume", type=["pdf", "docx", "txt"],
+        help="Supported formats: PDF, DOCX, TXT"
+    )
+
+    if uploaded_resume is not None:
+        file_bytes = uploaded_resume.read()
+
+        with st.spinner("Extracting text from resume…"):
+            try:
+                from resume_matcher import extract_resume_text
+                resume_text = extract_resume_text(file_bytes, uploaded_resume.name)
+            except Exception as exc:
+                st.error(f"Could not read the file: {exc}")
+                resume_text = ""
+
+        if resume_text:
+            with st.expander("📝 Extracted resume text (click to review / edit)"):
+                resume_text = st.text_area(
+                    "Resume text", value=resume_text, height=300,
+                    label_visibility="collapsed"
+                )
+
+            # ── Step 2: Analyse resume with LLM ──────────────────────────────
+            st.subheader("Step 1 – Analyse resume with AI")
+            analyse_btn = st.button("🔍 Analyse Resume", key="analyse_resume_btn")
+
+            if analyse_btn or st.session_state.get("resume_analysis"):
+                if analyse_btn:
+                    with st.spinner("Connecting to LM Studio and analysing resume…"):
+                        try:
+                            from resume_matcher import analyze_resume
+                            analysis = analyze_resume(resume_text)
+                            st.session_state["resume_analysis"] = analysis
+                            st.session_state["resume_text"]     = resume_text
+                        except Exception as exc:
+                            st.error(f"LLM error: {exc}")
+                            analysis = None
+                else:
+                    analysis = st.session_state.get("resume_analysis")
+                    resume_text = st.session_state.get("resume_text", resume_text)
+
+                if analysis:
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.markdown(f"**🎓 Experience level:** {analysis.get('experience_level','—').title()}")
+                        st.markdown(f"**📋 Summary:** {analysis.get('summary','—')}")
+                        st.markdown("**💼 Suggested job titles:**")
+                        for t in analysis.get("job_titles", []):
+                            st.markdown(f"  - {t}")
+                    with col_b:
+                        st.markdown("**🛠️ Key skills detected:**")
+                        for s in analysis.get("skills", []):
+                            st.markdown(f"  - {s}")
+                        st.markdown("**🔎 Suggested search terms:**")
+                        for q in analysis.get("search_terms", []):
+                            st.markdown(f"  - `{q}`")
+
+                    # ── Step 3: Search for jobs ───────────────────────────────
+                    st.subheader("Step 2 – Search for vacancies")
+
+                    default_search = (
+                        analysis.get("search_terms", [""])[:1][0]
+                        if analysis.get("search_terms") else ""
+                    )
+
+                    with st.form("resume_job_search_form"):
+                        rm_search_term = st.text_input(
+                            "Search term", value=default_search,
+                            help="Pre-filled from the AI analysis; feel free to edit."
+                        )
+                        rm_location      = st.text_input("Location", value="Netherlands")
+                        rm_results       = st.number_input("Max results", 1, 200, 50)
+                        rm_hours_old     = st.number_input("Max job age (hours)", 1, 2000, 1000)
+                        rm_country       = st.text_input("Indeed country", value="netherlands")
+                        rm_sites         = st.multiselect(
+                            "Sites to scrape",
+                            ["indeed", "linkedin", "zip_recruiter", "glassdoor", "google"],
+                            default=["indeed", "linkedin"],
+                        )
+                        rm_max_score     = st.number_input(
+                            "Max jobs to score with AI (most recent first)",
+                            min_value=1, max_value=50, value=10,
+                            help="Scoring every job calls the LLM once per job — keep this low for speed."
+                        )
+                        rm_submit = st.form_submit_button("🚀 Find & Score Vacancies")
+
+                    if rm_submit:
+                        if not rm_sites:
+                            st.warning("Select at least one site.")
+                        else:
+                            # --- Scrape jobs ---
+                            all_rm_jobs = []
+                            failed_rm   = []
+                            rm_progress = st.progress(0, text="Scraping jobs…")
+                            for i, site in enumerate(rm_sites):
+                                rm_progress.progress(i / len(rm_sites), text=f"Scraping {site}…")
+                                try:
+                                    result = scrape_jobs(
+                                        site_name=[site],
+                                        search_term=rm_search_term,
+                                        location=rm_location,
+                                        results_wanted=rm_results,
+                                        hours_old=rm_hours_old,
+                                        country_indeed=rm_country,
+                                    )
+                                    if result is not None and not result.empty:
+                                        all_rm_jobs.append(result)
+                                        st.toast(f"✅ {site}: {len(result)} jobs", icon="✅")
+                                except Exception as e:
+                                    failed_rm.append((site, str(e).splitlines()[0]))
+                                    st.toast(f"❌ {site} failed", icon="❌")
+
+                            rm_progress.progress(1.0, text="Scraping done!")
+
+                            if failed_rm:
+                                with st.expander(f"⚠️ {len(failed_rm)} site(s) failed"):
+                                    for site, err in failed_rm:
+                                        st.error(f"**{site}**: {err}")
+
+                            if all_rm_jobs:
+                                jobs_df = pd.concat(all_rm_jobs, ignore_index=True)
+                                st.success(f"Found **{len(jobs_df)}** jobs. Scoring the top **{rm_max_score}**…")
+
+                                # Score only the first N jobs (most recently posted)
+                                jobs_to_score = jobs_df.head(rm_max_score).copy()
+                                scores, strengths_list, gaps_list, explanations = [], [], [], []
+
+                                score_progress = st.progress(0, text="Scoring vacancies with AI…")
+                                from resume_matcher import score_job
+
+                                for idx, (_, row) in enumerate(jobs_to_score.iterrows()):
+                                    score_progress.progress(
+                                        (idx + 1) / len(jobs_to_score),
+                                        text=f"Scoring {idx+1}/{len(jobs_to_score)}: {row.get('title','?')}…"
+                                    )
+                                    try:
+                                        match_result = score_job(
+                                            resume_text=st.session_state.get("resume_text", resume_text),
+                                            job_title=str(row.get("title", "")),
+                                            job_description=str(row.get("description", "")),
+                                            company=str(row.get("company", "")),
+                                        )
+                                    except Exception as exc:
+                                        match_result = {
+                                            "score": 0,
+                                            "strengths": [],
+                                            "gaps": [],
+                                            "explanation": f"Error: {exc}",
+                                        }
+                                    scores.append(match_result["score"])
+                                    strengths_list.append(", ".join(match_result.get("strengths", [])))
+                                    gaps_list.append(", ".join(match_result.get("gaps", [])))
+                                    explanations.append(match_result["explanation"])
+
+                                score_progress.progress(1.0, text="Scoring complete!")
+
+                                jobs_to_score["match_score"]  = scores
+                                jobs_to_score["strengths"]    = strengths_list
+                                jobs_to_score["gaps"]         = gaps_list
+                                jobs_to_score["explanation"]  = explanations
+
+                                # Sort by score
+                                jobs_to_score = jobs_to_score.sort_values(
+                                    "match_score", ascending=False
+                                ).reset_index(drop=True)
+                                st.session_state["rm_scored_jobs"] = jobs_to_score
+
+                    # ── Display scored results ────────────────────────────────
+                    scored = st.session_state.get("rm_scored_jobs", pd.DataFrame())
+                    if not scored.empty:
+                        st.subheader("🏆 Vacancy Match Results")
+                        for i, row in scored.iterrows():
+                            score = row.get("match_score", 0)
+                            color = "🟢" if score >= 70 else ("🟡" if score >= 40 else "🔴")
+                            with st.expander(
+                                f"{color} **{score}/100** — {row.get('title','?')} @ {row.get('company','?')} "
+                                f"({row.get('location','?')})"
+                            ):
+                                st.markdown(f"**📊 Match score:** {score}/100")
+                                st.markdown(f"**💬 Explanation:** {row.get('explanation','—')}")
+                                if row.get("strengths"):
+                                    st.markdown(f"**✅ Strengths:** {row.get('strengths','—')}")
+                                if row.get("gaps"):
+                                    st.markdown(f"**⚠️ Gaps:** {row.get('gaps','—')}")
+                                job_url = row.get("job_url") or row.get("url", "")
+                                if job_url and str(job_url) != "nan":
+                                    st.markdown(f"🔗 [View Job Posting]({job_url})")
+                                desc = str(row.get("description", ""))
+                                if desc and desc != "nan":
+                                    st.markdown("**📄 Job Description:**")
+                                    st.markdown(desc[:1500] + ("…" if len(desc) > 1500 else ""))
+
+                        # Download
+                        dl_cols = [
+                            c for c in [
+                                "title", "company", "location", "match_score",
+                                "explanation", "strengths", "gaps", "job_url",
+                            ] if c in scored.columns
+                        ]
+                        st.download_button(
+                            "⬇️ Download scored results (CSV)",
+                            scored[dl_cols].to_csv(index=False),
+                            file_name="resume_matches.csv",
+                            mime="text/csv",
+                        )
+        else:
+            st.warning("Could not extract any text from the uploaded file. Please try a different file.")
+    else:
+        st.info("👆 Upload a resume (PDF, DOCX, or TXT) to get started.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tab 5 – Admin Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+with tabs[4]:
     st.title("Admin Dashboard 🔐")
 
     # ── Login ────────────────────────────────────────────────────────────────
