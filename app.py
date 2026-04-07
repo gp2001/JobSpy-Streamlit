@@ -8,6 +8,9 @@ from analytics import log_event, get_events_df, get_summary_stats
 st.set_page_config(page_title="ICT Job Scraper 🚀", page_icon="🔎", layout="wide")
 
 # ── App-level password gate ────────────────────────────────────────────────────
+# Two access levels:
+#   APP_PASSWORD         → standard access (Resume Matcher hidden)
+#   RESUME_PASSWORD      → full access (Resume Matcher visible)
 if not st.session_state.get("app_authenticated", False):
     st.title("🔐 ICT Group JobSpy")
     st.markdown("Please enter the access password to continue.")
@@ -16,11 +19,21 @@ if not st.session_state.get("app_authenticated", False):
         login_submit = st.form_submit_button("Enter")
     if login_submit:
         try:
-            correct = st.secrets["APP_PASSWORD"]
+            pwd_standard = st.secrets["APP_PASSWORD"]
         except (KeyError, FileNotFoundError):
-            correct = "ictgroupm&s"   # fallback when secrets.toml is absent
-        if app_pwd == correct:
+            pwd_standard = "ictgroupm&s"
+        try:
+            pwd_full = st.secrets["RESUME_PASSWORD"]
+        except (KeyError, FileNotFoundError):
+            pwd_full = "Pn0TpIF.[g#ND;#y"
+
+        if app_pwd == pwd_full:
             st.session_state["app_authenticated"] = True
+            st.session_state["resume_enabled"] = True
+            st.rerun()
+        elif app_pwd == pwd_standard:
+            st.session_state["app_authenticated"] = True
+            st.session_state["resume_enabled"] = False
             st.rerun()
         else:
             st.error("❌ Incorrect password. Please try again.")
@@ -58,7 +71,16 @@ st.sidebar.markdown("""
 """)
 
 # --- Main Tabs ---
-tabs = st.tabs(["Company Info 📊", "Company Map 🗺️", "LinkedIn Profile Search 🕵️‍♂️", "Resume Matcher 🤖", "Admin 🔐"])
+_resume_enabled = st.session_state.get("resume_enabled", False)
+_tab_labels = ["Company Info 📊", "Company Map 🗺️", "LinkedIn Profile Search 🕵️‍♂️"]
+if _resume_enabled:
+    _tab_labels.append("Resume Matcher 🤖")
+_tab_labels.append("Admin 🔐")
+tabs = st.tabs(_tab_labels)
+
+# Tab index helpers
+_ti_resume = _tab_labels.index("Resume Matcher 🤖") if _resume_enabled else None
+_ti_admin  = _tab_labels.index("Admin 🔐")
 
 with tabs[0]:
     st.title("Company Information 📊")
@@ -293,7 +315,13 @@ with tabs[2]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Tab 4 – Resume Matcher
 # ─────────────────────────────────────────────────────────────────────────────
-with tabs[3]:
+if _resume_enabled:
+    _resume_tab_ctx = tabs[_ti_resume]
+else:
+    import contextlib
+    _resume_tab_ctx = contextlib.nullcontext()
+
+with _resume_tab_ctx:
     st.title("Resume Matcher 🤖")
     st.markdown(
         "Upload your resume and let the AI find the best matching vacancies, "
@@ -516,7 +544,7 @@ with tabs[3]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Tab 5 – Admin Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
-with tabs[4]:
+with tabs[_ti_admin]:
     st.title("Admin Dashboard 🔐")
 
     # ── Login ────────────────────────────────────────────────────────────────
